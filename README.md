@@ -1,6 +1,6 @@
 # VectorForge-RAG — C++ Vector Database & Local RAG
 
-> **Created and maintained by Daksh Jain** ([@dakshjain19](https://github.com/dakshjain19)).
+Daksh Jain ([@dakshjain19](https://github.com/dakshjain19)).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
