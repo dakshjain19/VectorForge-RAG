@@ -2,6 +2,8 @@
 
 > **Created and maintained by Daksh Jain** ([@dakshjain19](https://github.com/dakshjain19)).
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A fully working **Vector Database** built from scratch in C++ with a web UI.  
 Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-side, plus a **RAG pipeline** powered by a local LLM via Ollama.
 
@@ -423,4 +425,8 @@ KD-Tree pruning relies on axis-aligned distance bounds. In high dimensions, almo
 
 ## License
 
-No standalone `LICENSE` file is currently included. The `httplib.h` dependency retains its own third-party MIT notice; see [ATTRIBUTION.md](ATTRIBUTION.md).
+This project is licensed under the **MIT License**. You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the project, subject to the terms of the license.
+
+See the [LICENSE](LICENSE) file for the full license text.
+
+The `httplib.h` dependency also retains its own third-party MIT license and copyright notice. See [ATTRIBUTION.md](ATTRIBUTION.md) for project authorship and third-party notices.
