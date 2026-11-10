@@ -1,11 +1,17 @@
 #!/bin/sh
+set -eu
+
 ollama serve &
-echo "Waiting for Ollama to start..."
-until ollama list > /dev/null 2>&1; do
+ollama_pid=$!
+trap 'kill "$ollama_pid" 2>/dev/null || true' INT TERM
+
+echo "Waiting for Ollama API..."
+until ollama list >/dev/null 2>&1; do
   sleep 2
 done
-echo "Ollama ready, pulling models..."
+
+echo "Pulling required models (first start can take several minutes)..."
 ollama pull nomic-embed-text
 ollama pull llama3.2
-echo "Models ready!"
-wait
+echo "Required models are ready."
+wait "$ollama_pid"

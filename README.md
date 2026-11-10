@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A fully working **Vector Database** built from scratch in C++ with a web UI.  
+A local-first **Vector Database** built from scratch in C++ with a web UI.  
 Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-side, plus a **RAG pipeline** powered by a local LLM via Ollama.
 
 > Built as an educational project to show how production vector databases like Pinecone, Weaviate, and Chroma actually work under the hood.
@@ -46,7 +46,7 @@ Ollama (llama3.2)                  ← reads retrieved chunks, generates an answ
 Answer
 ```
 
-**HNSW (Hierarchical Navigable Small World)** is the same algorithm used by Pinecone, Weaviate, Chroma, and Milvus. It builds a multilayer graph where each layer is progressively sparser — searches start at the top layer and zoom in, achieving O(log N) complexity instead of O(N) for brute force.
+**HNSW (Hierarchical Navigable Small World)** is the same algorithm used by Pinecone, Weaviate, Chroma, and Milvus. It builds a multilayer graph where each layer is progressively sparser — searches start at the top layer and zoom in, often achieving sublinear search behavior in practice; brute force remains an exact O(N·d) baseline. HNSW is approximate, and performance depends on graph parameters and data.
 
 ---
 
@@ -104,9 +104,12 @@ services:
   vectordb:
     build: .
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
-      - OLLAMA_HOST=ollama
+      SERVER_HOST: 0.0.0.0
+      OLLAMA_HOST: ollama
+    volumes:
+      - vector_data:/app/data
     depends_on:
       ollama:
         condition: service_healthy
@@ -120,14 +123,15 @@ services:
       - ./ollama-entrypoint.sh:/entrypoint.sh
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD-SHELL", "ollama list | grep -q nomic-embed-text && ollama list | grep -q llama3.2"]
       interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
 
 volumes:
   ollama_data:
+  vector_data:
 ```
 
 ### ollama-entrypoint.sh
@@ -309,7 +313,7 @@ ollama serve
 ./db
 ```
 
-Open your browser at `http://localhost:8080`.
+Open your browser at `http://localhost:8080`. The service binds to loopback by default. Do not expose this unauthenticated development API to the public internet.
 
 ---
 
@@ -422,6 +426,10 @@ Binary space partitioning. Each node splits space along one dimension (cycling t
 KD-Tree pruning relies on axis-aligned distance bounds. In high dimensions, almost all the space is near the boundary of the hypersphere — no subtrees get pruned. HNSW's graph-based approach doesn't have this problem.
 
 ---
+
+## Data and security
+
+Inserted demo vectors and document chunks are persisted in the local `data/` directory across restarts. This directory is ignored by Git. The server binds to `127.0.0.1` by default; Docker Compose publishes port 8080 only on the host loopback interface. Do not expose this unauthenticated development API publicly without adding authentication and transport security.
 
 ## License
 

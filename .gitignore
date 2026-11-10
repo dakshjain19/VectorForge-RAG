@@ -16,3 +16,6 @@ bin/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local persisted database files
+/data/

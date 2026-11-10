@@ -17,6 +17,9 @@
 #include <functional>
 #include <fstream>
 #include <climits>
+#include <cstdint>
+#include <filesystem>
+#include <tuple>
 
 static const int DIMS = 16;   // demo vectors
 // Doc embeddings dimension is determined at runtime from Ollama's model output
@@ -33,6 +36,71 @@ struct VectorItem {
 };
 
 using DistFn = std::function<float(const std::vector<float>&, const std::vector<float>&)>;
+
+// Small, versioned binary persistence helpers. Lengths are bounded on load so a
+// damaged data file cannot trigger unbounded allocations.
+namespace persistence {
+constexpr uint32_t VECTOR_MAGIC = 0x56464431; // VFD1
+constexpr uint32_t DOC_MAGIC    = 0x56464432; // VFD2
+
+template<class T> bool writePod(std::ostream& out, const T& value) {
+    out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+    return static_cast<bool>(out);
+}
+template<class T> bool readPod(std::istream& in, T& value) {
+    in.read(reinterpret_cast<char*>(&value), sizeof(T));
+    return static_cast<bool>(in);
+}
+inline bool writeString(std::ostream& out, const std::string& value) {
+    uint64_t n = value.size();
+    return writePod(out, n) && (out.write(value.data(), static_cast<std::streamsize>(n)), static_cast<bool>(out));
+}
+inline bool readString(std::istream& in, std::string& value) {
+    uint64_t n = 0;
+    if (!readPod(in, n) || n > 64ULL * 1024 * 1024) return false;
+    value.resize(static_cast<size_t>(n));
+    in.read(value.data(), static_cast<std::streamsize>(n));
+    return static_cast<bool>(in);
+}
+inline bool writeVector(std::ostream& out, const std::vector<float>& values) {
+    uint64_t n = values.size();
+    if (!writePod(out, n)) return false;
+    if (n) out.write(reinterpret_cast<const char*>(values.data()), static_cast<std::streamsize>(n * sizeof(float)));
+    return static_cast<bool>(out);
+}
+inline bool readVector(std::istream& in, std::vector<float>& values) {
+    uint64_t n = 0;
+    if (!readPod(in, n) || n == 0 || n > 1000000) return false;
+    values.resize(static_cast<size_t>(n));
+    in.read(reinterpret_cast<char*>(values.data()), static_cast<std::streamsize>(n * sizeof(float)));
+    if (!in) return false;
+    return std::all_of(values.begin(), values.end(), [](float x){ return std::isfinite(x); });
+}
+inline bool replaceFile(const std::string& temporary, const std::string& target) {
+    // Keep the previous complete snapshot until the new file is safely in place.
+    const std::string backup = target + ".bak";
+    std::error_code ec;
+    std::filesystem::remove(backup, ec);
+    ec.clear();
+    const bool hadTarget = std::filesystem::exists(target, ec) && !ec;
+    if (hadTarget) {
+        std::filesystem::rename(target, backup, ec);
+        if (ec) { std::filesystem::remove(temporary); return false; }
+    }
+    std::filesystem::rename(temporary, target, ec);
+    if (ec) {
+        if (hadTarget) {
+            std::error_code restoreError;
+            std::filesystem::rename(backup, target, restoreError);
+        }
+        std::filesystem::remove(temporary);
+        return false;
+    }
+    std::filesystem::remove(backup, ec);
+    return true;
+}
+} // namespace persistence
+
 
 // =====================================================================
 //  DISTANCE METRICS
@@ -120,7 +188,7 @@ class KDTree {
     }
 
     void knn(KDNode* n, const std::vector<float>& q, int k, int d, DistFn dist,
-             std::priority_queue<std::pair<float,int>>& heap)
+             std::priority_queue<std::pair<float,int>>& heap, bool axisPruning)
     {
         if (!n) return;
         float dn = dist(q, n->item.emb);
@@ -132,9 +200,9 @@ class KDTree {
         float diff = q[ax] - n->item.emb[ax];
         KDNode* closer  = diff < 0 ? n->left  : n->right;
         KDNode* farther = diff < 0 ? n->right : n->left;
-        knn(closer, q, k, d+1, dist, heap);
-        if ((int)heap.size() < k || std::abs(diff) < heap.top().first)
-            knn(farther, q, k, d+1, dist, heap);
+        knn(closer, q, k, d+1, dist, heap, axisPruning);
+        if (!axisPruning || (int)heap.size() < k || std::abs(diff) < heap.top().first)
+            knn(farther, q, k, d+1, dist, heap, axisPruning);
     }
 
 public:
@@ -144,10 +212,10 @@ public:
     void insert(const VectorItem& v) { root = ins(root, v, 0); }
 
     std::vector<std::pair<float,int>> knn(
-        const std::vector<float>& q, int k, DistFn dist)
+        const std::vector<float>& q, int k, DistFn dist, bool axisPruning = true)
     {
         std::priority_queue<std::pair<float,int>> heap;
-        knn(root, q, k, 0, dist, heap);
+        knn(root, q, k, 0, dist, heap, axisPruning);
         std::vector<std::pair<float,int>> r;
         while (!heap.empty()) { r.push_back(heap.top()); heap.pop(); }
         std::sort(r.begin(), r.end());
@@ -286,6 +354,13 @@ public:
         return W;
     }
 
+    void clear() {
+        G.clear();
+        topLayer = -1;
+        entryPt = -1;
+        rng.seed(42);
+    }
+
     void remove(int id) {
         if (!G.count(id)) return;
         for (auto& [nid, nd] : G)
@@ -338,6 +413,60 @@ public:
 
 class VectorDB {
     std::unordered_map<int, VectorItem> store;
+    const std::string dataFile = "data/demo_vectors.bin";
+    bool loadedFromDisk = false;
+
+    void saveLocked() {
+        std::filesystem::create_directories("data");
+        const std::string temp = dataFile + ".tmp";
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        if (!out) throw std::runtime_error("Cannot write demo vector database");
+        uint64_t count = store.size();
+        if (!persistence::writePod(out, persistence::VECTOR_MAGIC) ||
+            !persistence::writePod(out, count))
+            throw std::runtime_error("Failed writing demo vector database header");
+        for (const auto& [id, v] : store) {
+            int32_t storedId = id;
+            if (!persistence::writePod(out, storedId) ||
+                !persistence::writeString(out, v.metadata) ||
+                !persistence::writeString(out, v.category) ||
+                !persistence::writeVector(out, v.emb))
+                throw std::runtime_error("Failed writing demo vector database");
+        }
+        out.close();
+        if (!out || !persistence::replaceFile(temp, dataFile))
+            throw std::runtime_error("Failed finalizing demo vector database");
+        loadedFromDisk = true;
+    }
+
+    void loadFromDisk() {
+        std::string source = dataFile;
+        std::error_code fileError;
+        if (!std::filesystem::exists(source, fileError) &&
+            std::filesystem::exists(dataFile + ".bak", fileError))
+            source = dataFile + ".bak";
+        std::ifstream in(source, std::ios::binary);
+        if (!in) return;
+        uint32_t magic = 0; uint64_t count = 0;
+        if (!persistence::readPod(in, magic) || magic != persistence::VECTOR_MAGIC ||
+            !persistence::readPod(in, count) || count > 1000000) return;
+        std::vector<VectorItem> loaded;
+        for (uint64_t i = 0; i < count; ++i) {
+            int32_t id = 0; VectorItem v{};
+            if (!persistence::readPod(in, id) ||
+                !persistence::readString(in, v.metadata) ||
+                !persistence::readString(in, v.category) ||
+                !persistence::readVector(in, v.emb) ||
+                static_cast<int>(v.emb.size()) != dims) return;
+            v.id = id;
+            loaded.push_back(std::move(v));
+        }
+        for (const auto& v : loaded) {
+            store[v.id] = v; bf.insert(v); kdt.insert(v); hnsw.insert(v, cosine);
+            nextId = std::max(nextId, v.id + 1);
+        }
+        loadedFromDisk = true;
+    }
     BruteForce bf;
     KDTree     kdt;
     HNSW       hnsw;
@@ -346,7 +475,10 @@ class VectorDB {
 
 public:
     const int dims;
-    explicit VectorDB(int d) : kdt(d), hnsw(16, 200), dims(d) {}
+    explicit VectorDB(int d) : kdt(d), hnsw(16, 200), dims(d) { loadFromDisk(); }
+
+    bool hasStoredData() const { return loadedFromDisk; }
+    void save() { std::lock_guard<std::mutex> lk(mu); saveLocked(); }
 
     int insert(const std::string& meta, const std::string& cat,
                const std::vector<float>& emb, DistFn dist)
@@ -355,16 +487,22 @@ public:
         VectorItem v{nextId++, meta, cat, emb};
         store[v.id] = v;
         bf.insert(v); kdt.insert(v); hnsw.insert(v, dist);
+        saveLocked();
         return v.id;
     }
 
     bool remove(int id) {
         std::lock_guard<std::mutex> lk(mu);
         if (!store.count(id)) return false;
-        store.erase(id); bf.remove(id); hnsw.remove(id);
+        store.erase(id); bf.remove(id);
         std::vector<VectorItem> rem;
         for (auto& [i, v] : store) rem.push_back(v);
         kdt.rebuild(rem);
+        // Rebuild the graph so entry-point/top-layer metadata and connectivity
+        // remain valid even when the deleted node was the entry point.
+        hnsw.clear();
+        for (const auto& v : rem) hnsw.insert(v, cosine);
+        saveLocked();
         return true;
     }
 
@@ -380,7 +518,7 @@ public:
 
         std::vector<std::pair<float,int>> raw;
         if      (algo == "bruteforce") raw = bf.knn(q, k, dfn);
-        else if (algo == "kdtree")     raw = kdt.knn(q, k, dfn);
+        else if (algo == "kdtree")     raw = kdt.knn(q, k, dfn, metric != "cosine");
         else                           raw = hnsw.knn(q, k, 50, dfn);
 
         long long us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -406,7 +544,7 @@ public:
         };
         return {
             time([&]{ bf.knn(q, k, dfn); }),
-            time([&]{ kdt.knn(q, k, dfn); }),
+            time([&]{ kdt.knn(q, k, dfn, metric != "cosine"); }),
             time([&]{ hnsw.knn(q, k, 50, dfn); }),
             (int)store.size()
         };
@@ -517,13 +655,16 @@ bool parseBody(const std::string& b, std::string& meta,
         return parseVec(b.substr(p + 1, e - p - 1));
     };
     emb = extractArr("embedding");
-    return !meta.empty() && !emb.empty();
+    return !meta.empty() && !emb.empty() &&
+        std::all_of(emb.begin(), emb.end(), [](float x){ return std::isfinite(x); });
 }
 
 void cors(httplib::Response& res) {
-    res.set_header("Access-Control-Allow-Origin",  "*");
-    res.set_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.set_header("Access-Control-Allow-Headers", "Content-Type");
+    // The UI and API are served from the same origin. Do not enable wildcard
+    // CORS: this service is intentionally local-only and has no authentication.
+    res.set_header("X-Content-Type-Options", "nosniff");
+    res.set_header("Referrer-Policy", "no-referrer");
+    res.set_header("Cache-Control", "no-store");
 }
 
 // =====================================================================
@@ -652,6 +793,59 @@ struct DocItem {
 
 class DocumentDB {
     std::unordered_map<int, DocItem> store;
+    const std::string dataFile = "data/documents.bin";
+    bool loadedFromDisk = false;
+
+    void saveLocked() {
+        std::filesystem::create_directories("data");
+        const std::string temp = dataFile + ".tmp";
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        if (!out) throw std::runtime_error("Cannot write document database");
+        uint64_t count = store.size();
+        if (!persistence::writePod(out, persistence::DOC_MAGIC) ||
+            !persistence::writePod(out, count))
+            throw std::runtime_error("Failed writing document database header");
+        for (const auto& [id, doc] : store) {
+            int32_t storedId = id;
+            if (!persistence::writePod(out, storedId) ||
+                !persistence::writeString(out, doc.title) ||
+                !persistence::writeString(out, doc.text) ||
+                !persistence::writeVector(out, doc.emb))
+                throw std::runtime_error("Failed writing document database");
+        }
+        out.close();
+        if (!out || !persistence::replaceFile(temp, dataFile))
+            throw std::runtime_error("Failed finalizing document database");
+        loadedFromDisk = true;
+    }
+
+    void loadFromDisk() {
+        std::ifstream in(dataFile, std::ios::binary);
+        if (!in) return;
+        uint32_t magic = 0; uint64_t count = 0;
+        if (!persistence::readPod(in, magic) || magic != persistence::DOC_MAGIC ||
+            !persistence::readPod(in, count) || count > 1000000) return;
+        std::vector<DocItem> loaded;
+        int loadedDims = 0;
+        for (uint64_t i = 0; i < count; ++i) {
+            int32_t id = 0; DocItem doc{};
+            if (!persistence::readPod(in, id) ||
+                !persistence::readString(in, doc.title) ||
+                !persistence::readString(in, doc.text) ||
+                !persistence::readVector(in, doc.emb)) return;
+            if (loadedDims == 0) loadedDims = static_cast<int>(doc.emb.size());
+            if (static_cast<int>(doc.emb.size()) != loadedDims) return;
+            doc.id = id; loaded.push_back(std::move(doc));
+        }
+        dims = loadedDims;
+        for (const auto& doc : loaded) {
+            store[doc.id] = doc;
+            VectorItem vi{doc.id, doc.title, "doc", doc.emb};
+            hnsw.insert(vi, cosine); bf.insert(vi);
+            nextId = std::max(nextId, doc.id + 1);
+        }
+        loadedFromDisk = true;
+    }
     HNSW       hnsw;
     BruteForce bf;       // brute force fallback for small sets
     std::mutex mu;
@@ -659,20 +853,35 @@ class DocumentDB {
     int dims   = 0;      // determined from first inserted embedding
 
 public:
-    DocumentDB() : hnsw(16, 200) {}
+    DocumentDB() : hnsw(16, 200) { loadFromDisk(); }
+    bool hasStoredData() const { return loadedFromDisk; }
 
-    // Insert one chunk with its pre-computed embedding
-    int insert(const std::string& title, const std::string& text,
-               const std::vector<float>& emb)
+    // Validate every chunk before mutating the database, then commit them together.
+    std::vector<int> insertMany(
+        const std::vector<std::tuple<std::string, std::string, std::vector<float>>>& pending)
     {
+        if (pending.empty()) return {};
         std::lock_guard<std::mutex> lk(mu);
-        if (dims == 0) dims = (int)emb.size();
-        DocItem item{nextId++, title, text, emb};
-        store[item.id] = item;
-        VectorItem vi{item.id, title, "doc", emb};
-        hnsw.insert(vi, cosine);
-        bf.insert(vi);
-        return item.id;
+        const size_t expectedDims = dims == 0 ? std::get<2>(pending.front()).size() : static_cast<size_t>(dims);
+        if (expectedDims == 0) return {};
+        for (const auto& entry : pending) {
+            const auto& emb = std::get<2>(entry);
+            if (emb.size() != expectedDims ||
+                !std::all_of(emb.begin(), emb.end(), [](float x){ return std::isfinite(x); }))
+                return {};
+        }
+        if (dims == 0) dims = static_cast<int>(expectedDims);
+        std::vector<int> ids;
+        ids.reserve(pending.size());
+        for (const auto& entry : pending) {
+            DocItem item{nextId++, std::get<0>(entry), std::get<1>(entry), std::get<2>(entry)};
+            store[item.id] = item;
+            VectorItem vi{item.id, item.title, "doc", item.emb};
+            hnsw.insert(vi, cosine); bf.insert(vi);
+            ids.push_back(item.id);
+        }
+        saveLocked();
+        return ids;
     }
 
     // Semantic search — returns top-k most similar chunks
@@ -680,7 +889,8 @@ public:
         const std::vector<float>& q, int k, float max_dist = 0.7f)
     {
         std::lock_guard<std::mutex> lk(mu);
-        if (store.empty()) return {};
+        if (store.empty() || q.size() != static_cast<size_t>(dims) ||
+            !std::all_of(q.begin(), q.end(), [](float x){ return std::isfinite(x); })) return {};
         auto raw = (store.size() < 10)
                    ? bf.knn(q, k, cosine)
                    : hnsw.knn(q, k, 50, cosine);
@@ -693,7 +903,13 @@ public:
     bool remove(int id) {
         std::lock_guard<std::mutex> lk(mu);
         if (!store.count(id)) return false;
-        store.erase(id); hnsw.remove(id); bf.remove(id);
+        store.erase(id); bf.remove(id);
+        hnsw.clear();
+        for (const auto& [docId, doc] : store) {
+            VectorItem vi{doc.id, doc.title, "doc", doc.emb};
+            hnsw.insert(vi, cosine);
+        }
+        saveLocked();
         return true;
     }
 
@@ -709,7 +925,7 @@ public:
         return store.size();
     }
 
-    int getDims() { return dims; }
+    int getDims() { std::lock_guard<std::mutex> lk(mu); return dims; }
 };
 
 // =====================================================================
@@ -768,12 +984,15 @@ void loadDemo(VectorDB& db) {
 int main() {
     VectorDB   db(DIMS);
     DocumentDB docDB;
-    std::string ollamaHost = "[IP_ADDRESS]";
+    std::string ollamaHost = "127.0.0.1";
     const char* envHost = std::getenv("OLLAMA_HOST");
 if (envHost && std::string(envHost) != "") ollamaHost = envHost;
 OllamaClient ollama(ollamaHost, 11434);
 
-    loadDemo(db);
+    if (!db.hasStoredData()) {
+        loadDemo(db);
+        db.save();
+    }
 
     // Check Ollama at startup (non-fatal)
     bool ollamaUp = ollama.isAvailable();
@@ -786,7 +1005,21 @@ OllamaClient ollama(ollamaHost, 11434);
 
     httplib::Server svr;
 
-    // CORS preflight
+    // Reject cross-origin browser requests. CORS alone does not prevent
+    // simple cross-site POSTs from causing state changes (CSRF).
+    svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+        const auto origin = req.get_header_value("Origin");
+        if (!origin.empty() &&
+            origin != "http://localhost:8080" &&
+            origin != "http://127.0.0.1:8080") {
+            res.status = 403;
+            res.set_content("{\"error\":\"cross-origin requests are not allowed\"}", "application/json");
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
+
+    // Same-origin UI does not require CORS. This route only answers local preflight.
     svr.Options(".*", [](const httplib::Request&, httplib::Response& res) {
         cors(res); res.status = 204;
     });
@@ -916,22 +1149,30 @@ OllamaClient ollama(ollamaHost, 11434);
         }
 
         auto chunks = chunkText(text, 250, 30);
-        std::vector<int> ids;
-
-        for (int i = 0; i < (int)chunks.size(); i++) {
+        if (chunks.empty()) {
+            res.status = 400;
+            res.set_content("{\"error\":\"document contains no text\"}", "application/json");
+            return;
+        }
+        std::vector<std::tuple<std::string, std::string, std::vector<float>>> pending;
+        pending.reserve(chunks.size());
+        for (int i = 0; i < static_cast<int>(chunks.size()); i++) {
             auto emb = ollama.embed(chunks[i]);
             if (emb.empty()) {
-                res.set_content(
-                    "{\"error\":\"Ollama unavailable. "
-                    "Install from https://ollama.com then run: "
-                    "ollama pull nomic-embed-text && ollama pull llama3.2\"}",
-                    "application/json");
+                res.status = 503;
+                res.set_content("{\"error\":\"Embedding failed; no document chunks were stored. Check Ollama and nomic-embed-text.\"}", "application/json");
                 return;
             }
             std::string chunkTitle = (chunks.size() > 1)
                 ? title + " [" + std::to_string(i+1) + "/" + std::to_string(chunks.size()) + "]"
                 : title;
-            ids.push_back(docDB.insert(chunkTitle, chunks[i], emb));
+            pending.emplace_back(chunkTitle, chunks[i], std::move(emb));
+        }
+        auto ids = docDB.insertMany(pending);
+        if (ids.size() != chunks.size()) {
+            res.status = 400;
+            res.set_content("{\"error\":\"Embedding dimensions do not match the existing document index; no chunks were stored.\"}", "application/json");
+            return;
         }
 
         std::ostringstream ss;
@@ -1089,6 +1330,9 @@ OllamaClient ollama(ollamaHost, 11434);
             "text/html");
     });
 
-    svr.listen("0.0.0.0", 8080);
+    const char* bindEnv = std::getenv("SERVER_HOST");
+    const std::string bindHost = (bindEnv && *bindEnv) ? bindEnv : "127.0.0.1";
+    std::cout << "Binding HTTP server to " << bindHost << ":8080" << std::endl;
+    svr.listen(bindHost, 8080);
     return 0;
 }

@@ -2,14 +2,12 @@
 
 ## Project authorship
 
-Daksh Jain ([@dakshjain19](https://github.com/dakshjain19)).
+**Original creator and maintainer:** Daksh Jain ([@dakshjain19](https://github.com/dakshjain19)).
 
-The project was originally created by the repository owner. Earlier copies of this project were also published under another personal GitHub account; that account is intentionally not linked here.
+## Project license
+
+The project is licensed under the MIT License. See [LICENSE](LICENSE) for the complete terms.
 
 ## Third-party notices
 
-The `httplib.h` file contains the copyright and MIT license notice for the cpp-httplib library. That third-party notice is retained in the source file and must not be removed or altered.
-
-## License
-
-This repository does not currently include a standalone `LICENSE` file. The third-party `httplib.h` notice applies to that dependency and should not be treated as a license for the entire repository. Add a project-level license only after confirming the intended terms for all included code and assets.
+The cpp-httplib dependency in httplib.h retains its own copyright and MIT license notice. That notice applies to the dependency and does not replace the project-level license.

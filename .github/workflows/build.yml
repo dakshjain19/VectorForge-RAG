@@ -1,0 +1,17 @@
+name: C++ build and API smoke tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler and curl
+        run: sudo apt-get update && sudo apt-get install -y g++ curl
+      - name: Build and run API smoke tests
+        run: bash tests/api-smoke.sh
