@@ -429,3 +429,33 @@ This project is licensed under the **MIT License**. You are free to use, copy, m
 See the [LICENSE](LICENSE) file for the full license text.
 
 The `httplib.h` dependency also retains its own third-party MIT license and copyright notice. See [ATTRIBUTION.md](ATTRIBUTION.md) for project authorship and third-party notices.
+
+
+## Evaluation and Scalability
+
+The repository includes reproducible evaluation tools rather than relying only on a successful compile.
+
+### RAG quality evaluation
+
+The golden set in \`evaluation/rag_eval.json\` contains five small reference documents and five questions with expected source documents. With VectorForge and Ollama running, execute:
+
+\`\`\`bash
+python3 evaluation/rag_eval.py --base-url http://127.0.0.1:8080
+\`\`\`
+
+The evaluator inserts the reference documents, measures retrieval **Hit Rate@K**, **MRR@K**, and **Context Precision@K**, calls the full \`/doc/ask\` generation route, reports answer-keyword coverage and mean generation time, and deletes the inserted test chunks afterwards. Use \`--skip-generation\` to evaluate retrieval only. The answer-keyword score is diagnostic rather than a strict pass/fail gate because generated wording can vary between model versions. The retrieval gate requires at least 0.80 Hit Rate@K on this small smoke/evaluation set; this is not a substitute for a larger human-reviewed benchmark.
+
+### ANN scale and recall benchmark
+
+Compile and run the standalone benchmark:
+
+\`\`\`bash
+g++ -std=c++17 -O2 -Wall -Wextra -pthread benchmarks/ann_benchmark.cpp -o ann-benchmark
+./ann-benchmark
+\`\`\`
+
+It builds deterministic synthetic 16D datasets at 1K, 5K, and 10K vectors, runs 50 queries per size, checks KD-Tree cosine results against exact brute force, and reports HNSW Recall@10 plus average query latency and build time. Results are emitted as CSV. These are local synthetic measurements, not claims about production throughput; repeat on the target hardware and with representative embedding distributions before drawing performance conclusions.
+
+### Cloud integration workflow
+
+GitHub Actions workflow \`.github/workflows/integration-evaluation.yml\` runs the ANN benchmark and starts the Docker Compose stack for a full Ollama-backed RAG evaluation. It is manually runnable from the Actions tab and also runs when relevant evaluation/runtime files change. The Ollama model downloads can take several minutes and consume substantial runner time.
