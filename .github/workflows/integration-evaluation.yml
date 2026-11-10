@@ -1,0 +1,57 @@
+name: VectorForge integration and evaluation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "evaluation/**"
+      - "benchmarks/**"
+      - "docker-compose.yml"
+      - "Dockerfile"
+      - "ollama-entrypoint.sh"
+      - "main.cpp"
+      - ".github/workflows/integration-evaluation.yml"
+
+jobs:
+  ann-scale-benchmark:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile ANN benchmark
+        run: g++ -std=c++17 -O2 -Wall -Wextra -pthread benchmarks/ann_benchmark.cpp -o /tmp/vectorforge-ann-benchmark
+      - name: Run scale and recall benchmark
+        run: /tmp/vectorforge-ann-benchmark | tee ann-benchmark.csv
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vectorforge-ann-benchmark
+          path: ann-benchmark.csv
+
+  rag-integration-evaluation:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start VectorForge and Ollama
+        run: docker compose up -d --build
+      - name: Wait for application and Ollama models
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/status > /tmp/status.json; then
+              if grep -q '"ollamaAvailable":true' /tmp/status.json; then
+                cat /tmp/status.json
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+          docker compose logs
+          exit 1
+      - name: Run RAG retrieval and answer evaluation
+        run: python3 evaluation/rag_eval.py --base-url http://127.0.0.1:8080
+      - name: Capture service logs
+        if: always()
+        run: docker compose logs
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
