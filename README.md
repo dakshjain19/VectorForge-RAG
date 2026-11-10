@@ -1,6 +1,6 @@
 # VectorForge-RAG — C++ Vector Database & Local RAG
 
-> **Project provenance:** This repository is a maintained adaptation of the upstream project [aneklavya/VectorDB-with-RAG-Containerised](https://github.com/aneklavya/VectorDB-with-RAG-Containerised). The original implementation and its authorship remain credited to the upstream creator. This repository is maintained under the name **VectorForge-RAG** by **Daksh Jain** ([@dakshjain19](https://github.com/dakshjain19)). Changes in this repository should be understood as maintenance/customization, not a claim of sole original authorship. See [ATTRIBUTION.md](ATTRIBUTION.md).
+> **Maintained adaptation:** This repository is based on [aneklavya/VectorDB-with-RAG-Containerised](https://github.com/aneklavya/VectorDB-with-RAG-Containerised). The original implementation and authorship remain credited to the upstream creator. Maintained by **Daksh Jain** ([@dakshjain19](https://github.com/dakshjain19)). See [ATTRIBUTION.md](ATTRIBUTION.md).
 
 A fully working **Vector Database** built from scratch in C++ with a web UI.  
 Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-side, plus a **RAG pipeline** powered by a local LLM via Ollama.
@@ -423,4 +423,4 @@ KD-Tree pruning relies on axis-aligned distance bounds. In high dimensions, almo
 
 ## License
 
-The upstream README declares this project MIT-licensed. The upstream repository snapshot did not contain a separate `LICENSE` file or GitHub license metadata, so this repository does not invent a copyright holder or reproduce an unverified license text. See [ATTRIBUTION.md](ATTRIBUTION.md) and verify the applicable license against the upstream source before redistribution.
+The upstream README declares MIT, but the upstream snapshot used for this copy has no standalone `LICENSE` file and GitHub reports no detected license metadata. No copyright holder or license text is guessed here. See [ATTRIBUTION.md](ATTRIBUTION.md) and verify the applicable license against the upstream source before redistribution.
