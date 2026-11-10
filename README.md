@@ -1,7 +1,5 @@
 # VectorForge-RAG — C++ Vector Database & Local RAG
 
-> **Maintained adaptation:** This repository is based on [aneklavya/VectorDB-with-RAG-Containerised](https://github.com/aneklavya/VectorDB-with-RAG-Containerised). The original implementation and authorship remain credited to the upstream creator. Maintained by **Daksh Jain** ([@dakshjain19](https://github.com/dakshjain19)). See [ATTRIBUTION.md](ATTRIBUTION.md).
-
 A fully working **Vector Database** built from scratch in C++ with a web UI.  
 Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-side, plus a **RAG pipeline** powered by a local LLM via Ollama.
 
