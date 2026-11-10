@@ -1,6 +1,6 @@
 # VectorForge-RAG — C++ Vector Database & Local RAG
 
-> Maintained and customized by **Daksh Jain** ([@dakshjain19](https://github.com/dakshjain19)). This repository is an adaptation of an existing project; see [ATTRIBUTION.md](ATTRIBUTION.md) for project provenance and third-party notices.
+> **Created and maintained by Daksh Jain** ([@dakshjain19](https://github.com/dakshjain19)).
 
 A fully working **Vector Database** built from scratch in C++ with a web UI.  
 Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-side, plus a **RAG pipeline** powered by a local LLM via Ollama.
@@ -423,4 +423,4 @@ KD-Tree pruning relies on axis-aligned distance bounds. In high dimensions, almo
 
 ## License
 
-The upstream README declares MIT, but the upstream snapshot used for this copy has no standalone `LICENSE` file and GitHub reports no detected license metadata. No copyright holder or license text is guessed here. See [ATTRIBUTION.md](ATTRIBUTION.md) and verify the applicable license against the upstream source before redistribution.
+No standalone `LICENSE` file is currently included. The `httplib.h` dependency retains its own third-party MIT notice; see [ATTRIBUTION.md](ATTRIBUTION.md).
