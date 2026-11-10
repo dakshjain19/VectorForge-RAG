@@ -75,24 +75,19 @@ VectorForge-RAG/
 ### Dockerfile
 
 ```dockerfile
-# Stage 1: Build
 FROM ubuntu:22.04 AS builder
-
-RUN apt-get update && apt-get install -y \
-    g++ \
+RUN apt-get update && apt-get install -y --no-install-recommends g++ ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 COPY . .
-RUN g++ -std=c++17 -O2 main.cpp -o db -lpthread
+RUN g++ -std=c++17 -O2 -Wall -Wextra main.cpp -o db -pthread
 
-# Stage 2: Run
 FROM ubuntu:22.04 AS runner
-
 WORKDIR /app
 COPY --from=builder /app/db .
 COPY --from=builder /app/index.html .
-
+RUN mkdir -p /app/data
+ENV SERVER_HOST=0.0.0.0
 EXPOSE 8080
 CMD ["./db"]
 ```
@@ -116,11 +111,9 @@ services:
 
   ollama:
     image: ollama/ollama
-    ports:
-      - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-      - ./ollama-entrypoint.sh:/entrypoint.sh
+      - ./ollama-entrypoint.sh:/entrypoint.sh:ro
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     healthcheck:
       test: ["CMD-SHELL", "ollama list | grep -q nomic-embed-text && ollama list | grep -q llama3.2"]
@@ -138,16 +131,14 @@ volumes:
 
 ```bash
 #!/bin/sh
+set -eu
 ollama serve &
-echo "Waiting for Ollama to start..."
-until ollama list > /dev/null 2>&1; do
-  sleep 2
-done
-echo "Ollama ready, pulling models..."
+ollama_pid=$!
+trap 'kill "$ollama_pid" 2>/dev/null || true' INT TERM
+until ollama list >/dev/null 2>&1; do sleep 2; done
 ollama pull nomic-embed-text
 ollama pull llama3.2
-echo "Models ready!"
-wait
+wait "$ollama_pid"
 ```
 
 ### Step 1 — Build and Start

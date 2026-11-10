@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <tuple>
+#include <cstdlib>
+#include <stdexcept>
 
 static const int DIMS = 16;   // demo vectors
 // Doc embeddings dimension is determined at runtime from Ollama's model output
@@ -1029,12 +1031,15 @@ OllamaClient ollama(ollamaHost, 11434);
     svr.Get("/search", [&](const httplib::Request& req, httplib::Response& res) {
         cors(res);
         auto q = parseVec(req.get_param_value("v"));
-        if ((int)q.size() != DIMS) {
-            res.set_content("{\"error\":\"need " + std::to_string(DIMS) + "D vector\"}",
+        if ((int)q.size() != DIMS ||
+            !std::all_of(q.begin(), q.end(), [](float x){ return std::isfinite(x); })) {
+            res.status = 400;
+            res.set_content("{\"error\":\"expected a finite " + std::to_string(DIMS) + "D vector\"}",
                             "application/json"); return;
         }
         int k = 5;
         try { k = std::stoi(req.get_param_value("k")); } catch (...) {}
+        k = std::clamp(k, 1, 100);
         auto metric = req.get_param_value("metric"); if (metric.empty()) metric = "cosine";
         auto algo   = req.get_param_value("algo");   if (algo.empty())   algo   = "hnsw";
 
@@ -1060,7 +1065,8 @@ OllamaClient ollama(ollamaHost, 11434);
         cors(res);
         std::string meta, cat; std::vector<float> emb;
         if (!parseBody(req.body, meta, cat, emb) || (int)emb.size() != DIMS) {
-            res.set_content("{\"error\":\"invalid body\"}", "application/json"); return;
+            res.status = 400;
+            res.set_content("{\"error\":\"invalid body: metadata and a finite 16D embedding are required\"}", "application/json"); return;
         }
         int id = db.insert(meta, cat, emb, getDistFn("cosine"));
         res.set_content("{\"id\":" + std::to_string(id) + "}", "application/json");
@@ -1093,11 +1099,14 @@ OllamaClient ollama(ollamaHost, 11434);
     svr.Get("/benchmark", [&](const httplib::Request& req, httplib::Response& res) {
         cors(res);
         auto q = parseVec(req.get_param_value("v"));
-        if ((int)q.size() != DIMS) {
-            res.set_content("{\"error\":\"need " + std::to_string(DIMS) + "D vector\"}",
+        if ((int)q.size() != DIMS ||
+            !std::all_of(q.begin(), q.end(), [](float x){ return std::isfinite(x); })) {
+            res.status = 400;
+            res.set_content("{\"error\":\"expected a finite " + std::to_string(DIMS) + "D vector\"}",
                             "application/json"); return;
         }
         int k = 5; try { k = std::stoi(req.get_param_value("k")); } catch (...) {}
+        k = std::clamp(k, 1, 100);
         auto metric = req.get_param_value("metric"); if (metric.empty()) metric = "cosine";
         auto b = db.benchmark(q, k, metric);
         std::ostringstream ss;
@@ -1217,7 +1226,7 @@ OllamaClient ollama(ollamaHost, 11434);
     svr.Post("/doc/search", [&](const httplib::Request& req, httplib::Response& res) {
         cors(res);
         auto question = extractStr(req.body, "question");
-        int  k        = extractInt(req.body, "k", 3);
+        int  k        = std::clamp(extractInt(req.body, "k", 3), 1, 20);
         if (question.empty()) {
             res.set_content("{\"error\":\"need question\"}", "application/json"); return;
         }
