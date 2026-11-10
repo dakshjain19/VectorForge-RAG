@@ -2,7 +2,7 @@
 
 ## Project authorship
 
-**Original creator and maintainer:** Daksh Jain ([@dakshjain19](https://github.com/dakshjain19)).
+Daksh Jain ([@dakshjain19](https://github.com/dakshjain19)).
 
 The project was originally created by the repository owner. Earlier copies of this project were also published under another personal GitHub account; that account is intentionally not linked here.
 
