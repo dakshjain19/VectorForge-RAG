@@ -1,5 +1,7 @@
 # VectorForge-RAG — C++ Vector Database & Local RAG
 
+> Maintained and customized by **Daksh Jain** ([@dakshjain19](https://github.com/dakshjain19)). This repository is an adaptation of an existing project; see [ATTRIBUTION.md](ATTRIBUTION.md) for project provenance and third-party notices.
+
 A fully working **Vector Database** built from scratch in C++ with a web UI.  
 Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-side, plus a **RAG pipeline** powered by a local LLM via Ollama.
 
