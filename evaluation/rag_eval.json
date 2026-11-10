@@ -1,0 +1,71 @@
+{
+  "documents": [
+    {
+      "title": "VectorForge HNSW Design",
+      "text": "VectorForge-RAG implements Hierarchical Navigable Small World search in C++. HNSW stores vectors in a multilayer graph. Nodes are assigned random maximum layers, and each node connects to nearby neighbors. Search greedily descends upper layers and performs a wider candidate search at layer zero. The implementation uses M=16, efConstruction=200, and an efSearch value of 50 in the demo database. HNSW is approximate, so recall should be measured against exact brute-force nearest-neighbor results."
+    },
+    {
+      "title": "VectorForge Persistence",
+      "text": "VectorForge-RAG persists demo vectors and document embeddings in binary files under the data directory. The files contain versioned magic headers and bounded lengths. Writes are staged through a temporary file, and the previous snapshot is retained as a backup while the replacement is finalized. Docker Compose mounts a named volume at /app/data so data survives container recreation. The Ollama model cache is stored in a separate named volume."
+    },
+    {
+      "title": "VectorForge RAG Pipeline",
+      "text": "The VectorForge-RAG document pipeline splits long text into overlapping chunks of 250 words with a 30 word overlap. Each chunk is embedded using Ollama and the nomic-embed-text model. The resulting vectors are stored in a document HNSW index. At question time, the question is embedded, the nearest chunks are retrieved, and their text is included in a prompt sent to the llama3.2 model. The API returns the generated answer and the retrieved contexts."
+    },
+    {
+      "title": "VectorForge Distance Metrics",
+      "text": "VectorForge-RAG supports cosine distance, Euclidean distance, and Manhattan distance. Cosine distance compares vector direction using one minus cosine similarity. Euclidean distance is the square root of the sum of squared coordinate differences. Manhattan distance is the sum of absolute coordinate differences. The KD-Tree uses axis-aligned pruning for Euclidean and Manhattan distance, while cosine search disables that pruning because the coordinate-plane distance is not a valid lower bound for cosine distance."
+    },
+    {
+      "title": "VectorForge API",
+      "text": "The VectorForge-RAG REST API runs on port 8080. The demo vector endpoints include GET /search, POST /insert, DELETE /delete/:id, GET /items, GET /benchmark, and GET /hnsw-info. Document endpoints include POST /doc/insert, POST /doc/search, POST /doc/ask, GET /doc/list, DELETE /doc/delete/:id, and GET /status. The web interface is served from the root path. The default server bind address is 127.0.0.1."
+    }
+  ],
+  "queries": [
+    {
+      "question": "How does VectorForge construct and search its HNSW graph?",
+      "relevant_title": "VectorForge HNSW Design",
+      "answer_keywords": [
+        "multilayer",
+        "neighbors",
+        "layer"
+      ]
+    },
+    {
+      "question": "How are vectors and Ollama models persisted when using Docker?",
+      "relevant_title": "VectorForge Persistence",
+      "answer_keywords": [
+        "data",
+        "volume",
+        "backup"
+      ]
+    },
+    {
+      "question": "Explain the sequence from document text to a generated RAG answer.",
+      "relevant_title": "VectorForge RAG Pipeline",
+      "answer_keywords": [
+        "chunk",
+        "embedding",
+        "retrieved"
+      ]
+    },
+    {
+      "question": "Why is KD-Tree pruning disabled for cosine distance?",
+      "relevant_title": "VectorForge Distance Metrics",
+      "answer_keywords": [
+        "cosine",
+        "lower bound",
+        "coordinate"
+      ]
+    },
+    {
+      "question": "Which endpoint retrieves relevant document chunks without generating an answer?",
+      "relevant_title": "VectorForge API",
+      "answer_keywords": [
+        "/doc/search",
+        "document",
+        "contexts"
+      ]
+    }
+  ]
+}
