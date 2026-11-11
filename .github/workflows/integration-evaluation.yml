@@ -16,20 +16,42 @@ on:
 jobs:
   ann-scale-benchmark:
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Start Ollama for real embedding generation
+        run: |
+          docker run -d --name ann-ollama -p 11434:11434 ollama/ollama:latest
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; then exit 0; fi
+            sleep 5
+          done
+          docker logs ann-ollama
+          exit 1
+      - name: Pull embedding model
+        run: docker exec ann-ollama ollama pull nomic-embed-text
+      - name: Generate real 768D text embeddings
+        run: |
+          python3 benchmarks/generate_embedding_vectors.py \
+            --ollama-url http://127.0.0.1:11434 \
+            --model nomic-embed-text \
+            --documents 10000 --queries 100 --output ann-vectors.bin
       - name: Compile ANN benchmark
         run: g++ -std=c++17 -O2 -Wall -Wextra -pthread benchmarks/ann_benchmark.cpp -o /tmp/vectorforge-ann-benchmark
       - name: Run scale and recall benchmark
-        run: /tmp/vectorforge-ann-benchmark | tee ann-benchmark.csv
+        run: /tmp/vectorforge-ann-benchmark ann-vectors.bin | tee ann-benchmark.csv
       - name: Upload benchmark report
         uses: actions/upload-artifact@v4
         with:
           name: vectorforge-ann-benchmark
           path: ann-benchmark.csv
+      - name: Stop Ollama
+        if: always()
+        run: docker rm -f ann-ollama || true
 
   rag-integration-evaluation:
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Start VectorForge and Ollama
@@ -47,8 +69,8 @@ jobs:
           done
           docker compose logs
           exit 1
-      - name: Run RAG retrieval and answer evaluation
-        run: python3 evaluation/rag_eval.py --base-url http://127.0.0.1:8080
+      - name: Run expanded RAG retrieval and answer evaluation
+        run: python3 evaluation/rag_eval.py --base-url http://127.0.0.1:8080 --generation-sample 10
       - name: Capture service logs
         if: always()
         run: docker compose logs
