@@ -17,7 +17,7 @@ Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-
 
 | Feature | Description |
 |---|---|
-| **3 Search Algorithms** | HNSW (production-grade), KD-Tree, Brute Force — run all three and compare speed |
+| **3 Search Algorithms** | HNSW, KD-Tree, Brute Force — run all three and compare speed |
 | **3 Distance Metrics** | Cosine similarity, Euclidean distance, Manhattan distance |
 | **16D Demo Vectors** | 20 pre-loaded semantic vectors across 4 categories (CS, Math, Food, Sports) |
 | **2D PCA Scatter Plot** | Live visualization of semantic space — watch clusters form |
