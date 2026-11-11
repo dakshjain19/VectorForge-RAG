@@ -9,6 +9,8 @@ Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-
 
 > Built as an educational project to show how production vector databases like Pinecone, Weaviate, and Chroma actually work under the hood.
 
+**Project focus:** This is primarily a backend and retrieval-systems engineering project: indexing, nearest-neighbor search, persistence, REST APIs, local RAG orchestration, and benchmarking. It demonstrates systems skills rather than model training, so it complements a separate forecasting / predictive-ML project instead of replacing one.
+
 ---
 
 ## What This Project Does
@@ -60,17 +62,7 @@ Docker is the easiest way to run this project — no need to install g++, MSYS2,
 
 ### Project Structure
 
-Make sure your project folder looks like this:
-
-```
-VectorForge-RAG/
-├── main.cpp
-├── httplib.h
-├── index.html
-├── Dockerfile
-├── docker-compose.yml
-└── ollama-entrypoint.sh
-```
+The Docker setup uses the root-level `Dockerfile`, `docker-compose.yml`, `main.cpp`, `httplib.h`, `index.html`, and `ollama-entrypoint.sh`. The complete repository layout, including evaluation, benchmark, test, and CI folders, is shown in [Project Structure](#project-structure).
 
 ### Dockerfile
 
@@ -370,14 +362,30 @@ What happens behind the scenes:
 ## Project Structure
 
 ```
-VectorDB/
-├── main.cpp                ← C++ backend (HNSW, KD-Tree, BruteForce, REST API, RAG)
-├── httplib.h               ← Single-header HTTP server library (cpp-httplib)
-├── index.html              ← Frontend (PCA scatter plot, chat UI, benchmark)
-├── Dockerfile              ← Multi-stage build (Ubuntu builder → runner)
-├── docker-compose.yml      ← Wires vectordb + ollama together
-├── ollama-entrypoint.sh    ← Auto-pulls models on first run
-└── README.md               ← This file
+VectorForge-RAG/
+├── .github/
+│   └── workflows/
+│       ├── build.yml
+│       └── integration-evaluation.yml
+├── benchmarks/
+│   └── ann_benchmark.cpp
+├── evaluation/
+│   ├── README.md
+│   ├── rag_eval.json
+│   └── rag_eval.py
+├── tests/
+│   └── api-smoke.sh
+├── .dockerignore
+├── .gitignore
+├── ATTRIBUTION.md
+├── Dockerfile
+├── docker-compose.yml
+├── httplib.h
+├── index.html
+├── LICENSE
+├── main.cpp
+├── ollama-entrypoint.sh
+└── README.md
 ```
 
 ### Architecture (main.cpp)
@@ -437,25 +445,51 @@ The repository includes reproducible evaluation tools rather than relying only o
 
 ### RAG quality evaluation
 
-The golden set in \`evaluation/rag_eval.json\` contains five small reference documents and five questions with expected source documents. With VectorForge and Ollama running, execute:
+The golden set in `evaluation/rag_eval.json` contains **five reference documents and five questions** with expected source documents. This is a small smoke/evaluation set, not a statistically representative RAG benchmark. With VectorForge and Ollama running, execute:
 
-\`\`\`bash
+```bash
 python3 evaluation/rag_eval.py --base-url http://127.0.0.1:8080
-\`\`\`
+```
 
-The evaluator inserts the reference documents, measures retrieval **Hit Rate@K**, **MRR@K**, and **Context Precision@K**, calls the full \`/doc/ask\` generation route, reports answer-keyword coverage and mean generation time, and deletes the inserted test chunks afterwards. Use \`--skip-generation\` to evaluate retrieval only. The answer-keyword score is diagnostic rather than a strict pass/fail gate because generated wording can vary between model versions. The retrieval gate requires at least 0.80 Hit Rate@K on this small smoke/evaluation set; this is not a substitute for a larger human-reviewed benchmark.
+The evaluator inserts the reference documents, measures retrieval **Hit Rate@K**, **MRR@K**, and **Context Precision@K**, calls the full `/doc/ask` generation route, reports answer-keyword coverage and mean generation time, and deletes the inserted test chunks afterwards. Use `--skip-generation` to evaluate retrieval only. The answer-keyword score is diagnostic rather than a strict pass/fail gate because generated wording can vary between model versions. The retrieval gate requires at least 0.80 Hit Rate@K on this small set; this is not a substitute for a larger human-reviewed benchmark.
 
 ### ANN scale and recall benchmark
 
 Compile and run the standalone benchmark:
 
-\`\`\`bash
+```bash
 g++ -std=c++17 -O2 -Wall -Wextra -pthread benchmarks/ann_benchmark.cpp -o ann-benchmark
 ./ann-benchmark
-\`\`\`
+```
 
-It builds deterministic synthetic 16D datasets at 1K, 5K, and 10K vectors, runs 50 queries per size, checks KD-Tree cosine results against exact brute force, and reports HNSW Recall@10 plus average query latency and build time. Results are emitted as CSV. These are local synthetic measurements, not claims about production throughput; repeat on the target hardware and with representative embedding distributions before drawing performance conclusions.
+It builds deterministic **synthetic 16-dimensional datasets** at 1K, 5K, and 10K vectors, runs 50 queries per size, checks KD-Tree cosine results against exact brute force, and reports HNSW Recall@10 plus average query latency and build time. These are local synthetic measurements, not claims about production throughput; repeat on target hardware and representative embedding distributions before drawing performance conclusions.
+
+### Recorded evaluation results
+
+The following results were produced by GitHub Actions run [#2 — VectorForge integration and evaluation](https://github.com/dakshjain19/VectorForge-RAG/actions/runs/42799645823) on **November 10, 2026**. Both the ANN benchmark and full Ollama-backed RAG evaluation jobs completed successfully.
+
+**RAG evaluation** — five documents, five questions, K=3:
+
+| Metric | Result |
+|---|---:|
+| Hit Rate@3 | 100.00% |
+| MRR@3 | 0.90 |
+| Context Precision@3 | 33.33% |
+| Answer keyword coverage | 73.33% |
+| Mean generation time | 18.23 s |
+
+The 100% Hit Rate means each question retrieved its expected source within the top three results. Context Precision is reported separately because relevant retrieval is not the same as every returned context chunk being relevant. With only five questions, these values should be interpreted as a small-set evaluation, not a general quality guarantee.
+
+**ANN benchmark** — synthetic 16D vectors, 50 queries per dataset:
+
+| Dataset size | Build time (ms) | Brute force (µs/query) | KD-Tree (µs/query) | HNSW (µs/query) | HNSW Recall@10 |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 184.87 | 82.99 | 61.02 | 98.18 | 100% |
+| 5,000 | 1,913.98 | 455.50 | 310.93 | 156.24 | 100% |
+| 10,000 | 4,912.37 | 958.99 | 648.53 | 179.24 | 100% |
+
+At 10K vectors, HNSW's measured average query latency was approximately **5.35× lower** than brute force (179.24 µs vs 958.99 µs). At 1K, HNSW was slower than brute force, so the results do not imply that the approximate index wins at every dataset size. These timings are specific to the GitHub Actions runner and this synthetic workload.
 
 ### Cloud integration workflow
 
-GitHub Actions workflow \`.github/workflows/integration-evaluation.yml\` runs the ANN benchmark and starts the Docker Compose stack for a full Ollama-backed RAG evaluation. It is manually runnable from the Actions tab and also runs when relevant evaluation/runtime files change. The Ollama model downloads can take several minutes and consume substantial runner time.
+GitHub Actions workflow `.github/workflows/integration-evaluation.yml` runs the ANN benchmark and starts the Docker Compose stack for a full Ollama-backed RAG evaluation. It is manually runnable from the Actions tab and also runs when relevant evaluation/runtime files change. The Ollama model downloads can take several minutes and consume substantial runner time.
