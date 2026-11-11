@@ -60,9 +60,9 @@ Docker is the easiest way to run this project — no need to install g++, MSYS2,
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 
-### Project Structure
+### Files used by Docker
 
-The Docker setup uses the root-level `Dockerfile`, `docker-compose.yml`, `main.cpp`, `httplib.h`, `index.html`, and `ollama-entrypoint.sh`. The complete repository layout, including evaluation, benchmark, test, and CI folders, is shown in [Project Structure](#project-structure).
+The Docker setup uses the root-level `Dockerfile`, `docker-compose.yml`, `main.cpp`, `httplib.h`, `index.html`, and `ollama-entrypoint.sh`. The complete repository layout, including evaluation, benchmark, test, and CI folders, is documented in the [Project Structure](#project-structure) section below.
 
 ### Dockerfile
 
