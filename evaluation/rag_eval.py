@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate VectorForge-RAG retrieval and answer behavior against a tiny golden set.
-
-Uses only the Python standard library. The server and Ollama must already be running.
-"""
+"""Evaluate VectorForge retrieval on a larger curated corpus and sample answer generation."""
 import argparse
 import json
 import math
@@ -31,20 +28,36 @@ def request_json(base, path, method="GET", payload=None, timeout=240):
         raise RuntimeError(f"{method} {path}: HTTP {exc.code}: {detail}") from exc
 
 
+def choose_generation_indices(total, sample_count):
+    if sample_count >= total:
+        return set(range(total))
+    if sample_count == 1:
+        return {0}
+    return {round(i * (total - 1) / (sample_count - 1)) for i in range(sample_count)}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--k", type=int, default=3)
-    parser.add_argument("--skip-generation", action="store_true",
-                        help="measure retrieval only; do not call the LLM")
+    parser.add_argument("--skip-generation", action="store_true")
+    parser.add_argument("--generation-sample", type=int, default=10,
+                        help="number of evenly spaced queries used for LLM answer diagnostics")
+    parser.add_argument("--all-generation", action="store_true",
+                        help="generate answers for every query (slower)")
     args = parser.parse_args()
+    if args.generation_sample < 1:
+        parser.error("--generation-sample must be at least 1")
+
     golden = json.loads(DATA.read_text(encoding="utf-8"))
     inserted_ids = []
-    hits = []
-    reciprocal_ranks = []
-    precisions = []
-    keyword_scores = []
-    generation_seconds = []
+    hits, reciprocal_ranks, precisions = [], [], []
+    keyword_scores, generation_seconds = [], []
+    generation_indices = (
+        set() if args.skip_generation else
+        (set(range(len(golden["queries"])) if args.all_generation else
+         choose_generation_indices(len(golden["queries"]), args.generation_sample)))
+    )
 
     status = request_json(args.base_url, "/status")
     if not status.get("ollamaAvailable"):
@@ -58,7 +71,7 @@ def main():
                 raise RuntimeError(f"Document insertion returned no IDs: {doc['title']}")
             inserted_ids.extend(ids)
 
-        for case in golden["queries"]:
+        for index, case in enumerate(golden["queries"]):
             retrieved = request_json(
                 args.base_url, "/doc/search", "POST",
                 {"question": case["question"], "k": args.k},
@@ -75,7 +88,7 @@ def main():
                 if title == relevant or title.startswith(relevant + " [")
             ) / max(1, len(titles)))
 
-            if not args.skip_generation:
+            if index in generation_indices:
                 started = time.perf_counter()
                 answer_result = request_json(
                     args.base_url, "/doc/ask", "POST",
@@ -96,6 +109,7 @@ def main():
             "hit_rate_at_k": sum(hits) / max(1, len(hits)),
             "mrr_at_k": sum(reciprocal_ranks) / max(1, len(reciprocal_ranks)),
             "context_precision_at_k": sum(precisions) / max(1, len(precisions)),
+            "generation_query_count": len(generation_indices),
             "answer_keyword_coverage": (
                 sum(keyword_scores) / len(keyword_scores) if keyword_scores else None
             ),
@@ -103,12 +117,10 @@ def main():
                 sum(generation_seconds) / len(generation_seconds)
                 if generation_seconds else None
             ),
-            "generation_evaluated": not args.skip_generation,
+            "generation_evaluated": bool(generation_indices),
         }
         print("\nRAG EVALUATION")
         print(json.dumps(report, indent=2))
-        # Retrieval is the deterministic gate. Answer keyword coverage is reported
-        # as a diagnostic because local model output can vary across versions.
         if report["hit_rate_at_k"] < 0.8:
             raise RuntimeError("Retrieval hit-rate gate failed (expected >= 0.80)")
     finally:
