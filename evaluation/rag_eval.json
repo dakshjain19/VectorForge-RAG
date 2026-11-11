@@ -1,70 +1,577 @@
 {
   "documents": [
     {
-      "title": "VectorForge HNSW Design",
-      "text": "VectorForge-RAG implements Hierarchical Navigable Small World search in C++. HNSW stores vectors in a multilayer graph. Nodes are assigned random maximum layers, and each node connects to nearby neighbors. Search greedily descends upper layers and performs a wider candidate search at layer zero. The implementation uses M=16, efConstruction=200, and an efSearch value of 50 in the demo database. HNSW is approximate, so recall should be measured against exact brute-force nearest-neighbor results."
+      "title": "HNSW Graph Construction",
+      "text": "HNSW builds a hierarchical navigable small-world graph for approximate nearest-neighbor search. Each inserted vector receives a randomly sampled maximum layer. New nodes connect to nearby candidates at each eligible layer, with bounded neighbor lists controlled by M. Upper layers provide long-range navigation while layer zero contains the densest connections. efConstruction controls the breadth of candidate exploration during insertion; increasing it can improve graph quality at additional build cost."
     },
     {
-      "title": "VectorForge Persistence",
-      "text": "VectorForge-RAG persists demo vectors and document embeddings in binary files under the data directory. The files contain versioned magic headers and bounded lengths. Writes are staged through a temporary file, and the previous snapshot is retained as a backup while the replacement is finalized. Docker Compose mounts a named volume at /app/data so data survives container recreation. The Ollama model cache is stored in a separate named volume."
+      "title": "HNSW Query Search",
+      "text": "An HNSW query begins at the entry point on the highest populated layer. Greedy search moves to closer neighbors while descending through upper layers. At layer zero, a best-first search explores a candidate set whose breadth is controlled by efSearch. A larger efSearch generally improves recall but increases query latency and memory traffic."
     },
     {
-      "title": "VectorForge RAG Pipeline",
-      "text": "The VectorForge-RAG document pipeline splits long text into overlapping chunks of 250 words with a 30 word overlap. Each chunk is embedded using Ollama and the nomic-embed-text model. The resulting vectors are stored in a document HNSW index. At question time, the question is embedded, the nearest chunks are retrieved, and their text is included in a prompt sent to the llama3.2 model. The API returns the generated answer and the retrieved contexts."
+      "title": "Vector Persistence Format",
+      "text": "A persistent vector store must serialize identifiers, metadata, dimensions, and floating-point coordinates. A versioned file header allows the loader to reject incompatible formats. Length fields should be bounded before allocating memory. A safe save operation writes a temporary snapshot, flushes it, and only then replaces the previous database file."
     },
     {
-      "title": "VectorForge Distance Metrics",
-      "text": "VectorForge-RAG supports cosine distance, Euclidean distance, and Manhattan distance. Cosine distance compares vector direction using one minus cosine similarity. Euclidean distance is the square root of the sum of squared coordinate differences. Manhattan distance is the sum of absolute coordinate differences. The KD-Tree uses axis-aligned pruning for Euclidean and Manhattan distance, while cosine search disables that pruning because the coordinate-plane distance is not a valid lower bound for cosine distance."
+      "title": "Atomic Snapshot Replacement",
+      "text": "Atomic persistence avoids leaving a partially written database after a crash. The application writes a complete new snapshot to a temporary file, checks write and flush results, and preserves the previous snapshot until the new file is ready. Recovery logic can validate the primary file and fall back to a known-good backup when necessary."
     },
     {
-      "title": "VectorForge API",
-      "text": "The VectorForge-RAG REST API runs on port 8080. The demo vector endpoints include GET /search, POST /insert, DELETE /delete/:id, GET /items, GET /benchmark, and GET /hnsw-info. Document endpoints include POST /doc/insert, POST /doc/search, POST /doc/ask, GET /doc/list, DELETE /doc/delete/:id, and GET /status. The web interface is served from the root path. The default server bind address is 127.0.0.1."
+      "title": "Document Chunking Strategy",
+      "text": "Long documents are divided into smaller overlapping text chunks before embedding. Chunk size controls how much context each vector represents, while overlap reduces the chance that a fact split at a boundary loses its surrounding meaning. Chunking should preserve useful headings and metadata so retrieved passages can be traced back to their source document."
+    },
+    {
+      "title": "Embedding Model Inference",
+      "text": "An embedding model maps text into a dense numerical vector so semantically related passages can be compared. The same model and preprocessing rules should be used for both indexed documents and incoming questions. Changing the embedding model or its dimensionality generally requires re-embedding the corpus and rebuilding the vector index."
+    },
+    {
+      "title": "Cosine Similarity",
+      "text": "Cosine similarity compares the angle between two vectors rather than their raw magnitudes. Cosine distance is commonly computed as one minus cosine similarity. It is useful when vector direction represents semantic meaning and vector magnitude is not intended to dominate ranking. Implementations must handle zero-length vectors explicitly to avoid division by zero."
+    },
+    {
+      "title": "Euclidean Distance",
+      "text": "Euclidean distance is the square root of the sum of squared coordinate differences between two vectors. It measures straight-line distance in the embedding space and is sensitive to vector magnitude. For a KD-Tree, the distance from a query to a splitting plane can provide a lower bound for deciding whether the opposite subtree may contain a closer point."
+    },
+    {
+      "title": "Manhattan Distance",
+      "text": "Manhattan distance is the sum of absolute coordinate differences between two vectors. It measures movement along coordinate axes and is also called L1 distance. A KD-Tree can use the absolute difference on its split axis as a lower bound when deciding whether a far subtree can be skipped."
+    },
+    {
+      "title": "KD-Tree Construction",
+      "text": "A KD-Tree recursively partitions points using one coordinate axis at each level. A common construction strategy selects a median point to keep the tree balanced, then cycles through dimensions for subsequent splits. Incremental insertion without rebalancing can create a skewed tree and degrade search toward linear time."
+    },
+    {
+      "title": "KD-Tree High-Dimensional Limits",
+      "text": "KD-Tree pruning depends on geometric lower bounds from axis-aligned partitions. In high-dimensional spaces, points often become difficult to separate using a single coordinate, so many branches must be visited. This dimensionality effect can make KD-Tree queries approach brute-force cost for dense text embeddings."
+    },
+    {
+      "title": "Brute-Force Nearest Neighbors",
+      "text": "Brute-force search computes the distance from the query to every stored vector, sorts or selects the best candidates, and returns the top K. It is exact for the selected distance function and is a useful ground-truth baseline for measuring approximate-neighbor recall. Its query cost grows linearly with the number of vectors and dimensions."
+    },
+    {
+      "title": "ANN Recall Measurement",
+      "text": "Recall@K compares the approximate index's returned neighbors with the exact top-K neighbors from a ground-truth search. It is calculated as the number of overlapping result IDs divided by K, averaged over a query set when reporting aggregate recall. Recall should be measured alongside latency because faster search may return fewer exact neighbors."
+    },
+    {
+      "title": "REST API Validation",
+      "text": "A REST API should validate required fields, data types, vector dimensions, and numeric values before modifying the database. Invalid requests should return clear client-error status codes and useful messages. Validation at the boundary prevents malformed vectors or missing metadata from reaching indexing and persistence code."
+    },
+    {
+      "title": "Document Ingestion Endpoint",
+      "text": "A document ingestion route accepts a title and text, validates that both are present, splits the text into chunks, obtains embeddings, and stores each chunk with source metadata. The response should identify inserted records so clients can report success and later delete or inspect the stored content."
+    },
+    {
+      "title": "Retrieval-Only API",
+      "text": "A retrieval-only endpoint embeds the user's question, searches the document index, and returns the top matching passages with their metadata. It does not invoke a text-generation model. Separating retrieval from answer generation makes it easier to debug search quality and measure retrieval metrics independently."
+    },
+    {
+      "title": "RAG Answer Generation",
+      "text": "A RAG answer endpoint retrieves relevant document chunks and places their text into a prompt together with the user's question. A local language model generates a response grounded in the supplied context. The application should return both the answer and retrieved passages so users can inspect the evidence used by the model."
+    },
+    {
+      "title": "Ollama Model Roles",
+      "text": "A local RAG system commonly uses one Ollama model for embeddings and another for text generation. The embedding model converts documents and questions into vectors; the generative model reads retrieved passages and writes an answer. Both models must be available before the complete RAG workflow can run."
+    },
+    {
+      "title": "RAG Hit Rate and MRR",
+      "text": "Hit Rate@K measures the fraction of questions for which at least one relevant document appears in the top K results. Mean Reciprocal Rank averages the reciprocal of the first relevant result's rank, rewarding systems that place relevant evidence nearer the top. These metrics evaluate retrieval ordering rather than the factual correctness of generated answers."
+    },
+    {
+      "title": "Context Precision",
+      "text": "Context Precision@K measures how much of the retrieved context is relevant to a query. A system can achieve a perfect hit rate while still returning several irrelevant chunks in the same top-K result list. Reporting both metrics distinguishes finding at least one correct source from keeping the overall retrieved context focused."
+    },
+    {
+      "title": "Answer Keyword Coverage",
+      "text": "A simple answer keyword coverage metric checks whether selected expected terms appear in a generated response. It is inexpensive and deterministic, but it is only a diagnostic: correct paraphrases may omit exact terms, while an answer can include keywords without being factually correct. Human review or a validated semantic evaluator is needed for stronger answer-quality claims."
+    },
+    {
+      "title": "Benchmark Reproducibility",
+      "text": "A useful performance benchmark fixes its dataset, query set, random seed, software build, and measurement procedure. It should report hardware and runtime conditions, repeat measurements, and summarize distributions such as median and tail latency rather than relying on one timing. Results should be compared under identical conditions."
+    },
+    {
+      "title": "GitHub Actions Evaluation",
+      "text": "A continuous-integration workflow can compile the C++ benchmark, start the application and its dependencies, run API integration tests, and upload machine-readable reports as artifacts. Separating build, smoke-test, and evaluation jobs makes failures easier to identify. CI results prove that a defined test passed in that environment, not that every production workload is supported."
+    },
+    {
+      "title": "Docker Compose Networking",
+      "text": "Docker Compose creates a network where services can reach each other by service name. A VectorForge container can therefore connect to the Ollama service using its Compose hostname instead of localhost. Named volumes can preserve database files and model caches when containers are recreated."
+    },
+    {
+      "title": "Concurrency and Shared State",
+      "text": "A multithreaded vector database must protect shared indexes and persistence state from concurrent mutation. Mutexes can serialize critical sections, while read-write locks may allow concurrent readers when the data structure supports it. Lock scope should be kept small, and long-running model inference should not unnecessarily block unrelated search requests."
+    },
+    {
+      "title": "API Security Boundaries",
+      "text": "A development REST API bound to loopback is not automatically safe to expose publicly. A public deployment should add authentication, authorization, transport encryption, request-size limits, rate limiting, and careful error handling. Secrets and internal model endpoints should not be exposed through client-controlled request fields."
     }
   ],
   "queries": [
     {
-      "question": "How does VectorForge construct and search its HNSW graph?",
-      "relevant_title": "VectorForge HNSW Design",
+      "question": "How does HNSW assign graph layers and connect a newly inserted vector?",
+      "relevant_title": "HNSW Graph Construction",
       "answer_keywords": [
-        "multilayer",
+        "layers",
         "neighbors",
-        "layer"
+        "efConstruction"
       ]
     },
     {
-      "question": "How are vectors and Ollama models persisted when using Docker?",
-      "relevant_title": "VectorForge Persistence",
+      "question": "What does efConstruction control while building an HNSW index?",
+      "relevant_title": "HNSW Graph Construction",
       "answer_keywords": [
-        "data",
-        "volume",
-        "backup"
+        "layers",
+        "neighbors",
+        "efConstruction"
       ]
     },
     {
-      "question": "Explain the sequence from document text to a generated RAG answer.",
-      "relevant_title": "VectorForge RAG Pipeline",
+      "question": "Describe the search path from the top HNSW layer to layer zero.",
+      "relevant_title": "HNSW Query Search",
       "answer_keywords": [
-        "chunk",
+        "entry",
+        "layer",
+        "efSearch"
+      ]
+    },
+    {
+      "question": "How does efSearch affect HNSW query quality and latency?",
+      "relevant_title": "HNSW Query Search",
+      "answer_keywords": [
+        "entry",
+        "layer",
+        "efSearch"
+      ]
+    },
+    {
+      "question": "Which fields should a vector database store in its persistent snapshot?",
+      "relevant_title": "Vector Persistence Format",
+      "answer_keywords": [
+        "versioned",
+        "snapshot",
+        "dimensions"
+      ]
+    },
+    {
+      "question": "Why should a binary vector file use a versioned header and bounded lengths?",
+      "relevant_title": "Vector Persistence Format",
+      "answer_keywords": [
+        "versioned",
+        "snapshot",
+        "dimensions"
+      ]
+    },
+    {
+      "question": "How can a database avoid corrupting its only snapshot during a save?",
+      "relevant_title": "Atomic Snapshot Replacement",
+      "answer_keywords": [
+        "temporary",
+        "backup",
+        "recovery"
+      ]
+    },
+    {
+      "question": "What role does a backup snapshot play during recovery?",
+      "relevant_title": "Atomic Snapshot Replacement",
+      "answer_keywords": [
+        "temporary",
+        "backup",
+        "recovery"
+      ]
+    },
+    {
+      "question": "Why does a RAG pipeline split long documents into overlapping chunks?",
+      "relevant_title": "Document Chunking Strategy",
+      "answer_keywords": [
+        "chunks",
+        "overlap",
+        "context"
+      ]
+    },
+    {
+      "question": "What trade-off is controlled by chunk size in document retrieval?",
+      "relevant_title": "Document Chunking Strategy",
+      "answer_keywords": [
+        "chunks",
+        "overlap",
+        "context"
+      ]
+    },
+    {
+      "question": "Why must document and query text use the same embedding model?",
+      "relevant_title": "Embedding Model Inference",
+      "answer_keywords": [
         "embedding",
-        "retrieved"
+        "model",
+        "rebuild"
       ]
     },
     {
-      "question": "Why is KD-Tree pruning disabled for cosine distance?",
-      "relevant_title": "VectorForge Distance Metrics",
+      "question": "What should happen when a vector database changes its embedding model?",
+      "relevant_title": "Embedding Model Inference",
+      "answer_keywords": [
+        "embedding",
+        "model",
+        "rebuild"
+      ]
+    },
+    {
+      "question": "How is cosine distance derived from cosine similarity?",
+      "relevant_title": "Cosine Similarity",
       "answer_keywords": [
         "cosine",
-        "lower bound",
-        "coordinate"
+        "angle",
+        "magnitude"
       ]
     },
     {
-      "question": "Which endpoint retrieves relevant document chunks without generating an answer?",
-      "relevant_title": "VectorForge API",
+      "question": "Why is cosine similarity useful for comparing semantic embeddings?",
+      "relevant_title": "Cosine Similarity",
       "answer_keywords": [
-        "/doc/search",
-        "document",
-        "contexts"
+        "cosine",
+        "angle",
+        "magnitude"
+      ]
+    },
+    {
+      "question": "How is Euclidean distance calculated between two vectors?",
+      "relevant_title": "Euclidean Distance",
+      "answer_keywords": [
+        "squared",
+        "distance",
+        "prune"
+      ]
+    },
+    {
+      "question": "How can a KD-Tree use a splitting plane to prune Euclidean search?",
+      "relevant_title": "Euclidean Distance",
+      "answer_keywords": [
+        "squared",
+        "distance",
+        "prune"
+      ]
+    },
+    {
+      "question": "What is the coordinate-wise calculation used by Manhattan distance?",
+      "relevant_title": "Manhattan Distance",
+      "answer_keywords": [
+        "absolute",
+        "L1",
+        "axis"
+      ]
+    },
+    {
+      "question": "How does a KD-Tree prune a subtree for Manhattan nearest-neighbor search?",
+      "relevant_title": "Manhattan Distance",
+      "answer_keywords": [
+        "absolute",
+        "L1",
+        "axis"
+      ]
+    },
+    {
+      "question": "Why does median-based splitting help keep a KD-Tree balanced?",
+      "relevant_title": "KD-Tree Construction",
+      "answer_keywords": [
+        "median",
+        "balanced",
+        "skewed"
+      ]
+    },
+    {
+      "question": "What performance problem can occur when a KD-Tree is built by naive sequential insertion?",
+      "relevant_title": "KD-Tree Construction",
+      "answer_keywords": [
+        "median",
+        "balanced",
+        "skewed"
+      ]
+    },
+    {
+      "question": "Why can KD-Tree search lose its advantage on high-dimensional embeddings?",
+      "relevant_title": "KD-Tree High-Dimensional Limits",
+      "answer_keywords": [
+        "dimensions",
+        "pruning",
+        "brute-force"
+      ]
+    },
+    {
+      "question": "What does the curse of dimensionality do to KD-Tree pruning?",
+      "relevant_title": "KD-Tree High-Dimensional Limits",
+      "answer_keywords": [
+        "dimensions",
+        "pruning",
+        "brute-force"
+      ]
+    },
+    {
+      "question": "Why is brute-force search useful when evaluating an approximate HNSW index?",
+      "relevant_title": "Brute-Force Nearest Neighbors",
+      "answer_keywords": [
+        "exact",
+        "baseline",
+        "linear"
+      ]
+    },
+    {
+      "question": "How does brute-force nearest-neighbor query cost scale with dataset size?",
+      "relevant_title": "Brute-Force Nearest Neighbors",
+      "answer_keywords": [
+        "exact",
+        "baseline",
+        "linear"
+      ]
+    },
+    {
+      "question": "How is HNSW Recall@K calculated against exact nearest-neighbor results?",
+      "relevant_title": "ANN Recall Measurement",
+      "answer_keywords": [
+        "Recall",
+        "exact",
+        "latency"
+      ]
+    },
+    {
+      "question": "Why should ANN recall be reported together with query latency?",
+      "relevant_title": "ANN Recall Measurement",
+      "answer_keywords": [
+        "Recall",
+        "exact",
+        "latency"
+      ]
+    },
+    {
+      "question": "What request fields should a vector insertion endpoint validate?",
+      "relevant_title": "REST API Validation",
+      "answer_keywords": [
+        "validation",
+        "dimensions",
+        "400"
+      ]
+    },
+    {
+      "question": "Why should malformed vector data be rejected before indexing?",
+      "relevant_title": "REST API Validation",
+      "answer_keywords": [
+        "validation",
+        "dimensions",
+        "400"
+      ]
+    },
+    {
+      "question": "What are the main processing stages of a document insertion endpoint?",
+      "relevant_title": "Document Ingestion Endpoint",
+      "answer_keywords": [
+        "title",
+        "chunks",
+        "identifiers"
+      ]
+    },
+    {
+      "question": "Why should document ingestion return identifiers for inserted chunks?",
+      "relevant_title": "Document Ingestion Endpoint",
+      "answer_keywords": [
+        "title",
+        "chunks",
+        "identifiers"
+      ]
+    },
+    {
+      "question": "How does a retrieval-only endpoint differ from a full RAG answer endpoint?",
+      "relevant_title": "Retrieval-Only API",
+      "answer_keywords": [
+        "retrieval",
+        "contexts",
+        "generation"
+      ]
+    },
+    {
+      "question": "Which API behavior allows developers to inspect retrieved passages without calling an LLM?",
+      "relevant_title": "Retrieval-Only API",
+      "answer_keywords": [
+        "retrieval",
+        "contexts",
+        "generation"
+      ]
+    },
+    {
+      "question": "What information is passed to the language model during RAG answer generation?",
+      "relevant_title": "RAG Answer Generation",
+      "answer_keywords": [
+        "prompt",
+        "context",
+        "answer"
+      ]
+    },
+    {
+      "question": "Why should a RAG API return retrieved source passages alongside its answer?",
+      "relevant_title": "RAG Answer Generation",
+      "answer_keywords": [
+        "prompt",
+        "context",
+        "answer"
+      ]
+    },
+    {
+      "question": "What are the separate responsibilities of the embedding and generation models in Ollama?",
+      "relevant_title": "Ollama Model Roles",
+      "answer_keywords": [
+        "embedding",
+        "generation",
+        "Ollama"
+      ]
+    },
+    {
+      "question": "Why does a local RAG deployment need both an embedding model and a chat model?",
+      "relevant_title": "Ollama Model Roles",
+      "answer_keywords": [
+        "embedding",
+        "generation",
+        "Ollama"
+      ]
+    },
+    {
+      "question": "What does Hit Rate@K measure in a RAG retrieval evaluation?",
+      "relevant_title": "RAG Hit Rate and MRR",
+      "answer_keywords": [
+        "Hit Rate",
+        "MRR",
+        "rank"
+      ]
+    },
+    {
+      "question": "How does Mean Reciprocal Rank reward a relevant result appearing near rank one?",
+      "relevant_title": "RAG Hit Rate and MRR",
+      "answer_keywords": [
+        "Hit Rate",
+        "MRR",
+        "rank"
+      ]
+    },
+    {
+      "question": "How can a RAG system have perfect Hit Rate but low Context Precision?",
+      "relevant_title": "Context Precision",
+      "answer_keywords": [
+        "precision",
+        "relevant",
+        "chunks"
+      ]
+    },
+    {
+      "question": "What does Context Precision@K reveal about irrelevant retrieved passages?",
+      "relevant_title": "Context Precision",
+      "answer_keywords": [
+        "precision",
+        "relevant",
+        "chunks"
+      ]
+    },
+    {
+      "question": "What are the limitations of exact keyword coverage for evaluating generated RAG answers?",
+      "relevant_title": "Answer Keyword Coverage",
+      "answer_keywords": [
+        "keywords",
+        "paraphrases",
+        "diagnostic"
+      ]
+    },
+    {
+      "question": "Why can keyword presence fail to prove that an LLM answer is factually correct?",
+      "relevant_title": "Answer Keyword Coverage",
+      "answer_keywords": [
+        "keywords",
+        "paraphrases",
+        "diagnostic"
+      ]
+    },
+    {
+      "question": "Which variables should be held constant to make an ANN benchmark reproducible?",
+      "relevant_title": "Benchmark Reproducibility",
+      "answer_keywords": [
+        "seed",
+        "repeat",
+        "percentiles"
+      ]
+    },
+    {
+      "question": "Why should a performance report include repeated runs and latency percentiles?",
+      "relevant_title": "Benchmark Reproducibility",
+      "answer_keywords": [
+        "seed",
+        "repeat",
+        "percentiles"
+      ]
+    },
+    {
+      "question": "What tasks can a GitHub Actions workflow automate for a vector database project?",
+      "relevant_title": "GitHub Actions Evaluation",
+      "answer_keywords": [
+        "workflow",
+        "integration",
+        "artifact"
+      ]
+    },
+    {
+      "question": "Why should benchmark output be uploaded as a CI artifact?",
+      "relevant_title": "GitHub Actions Evaluation",
+      "answer_keywords": [
+        "workflow",
+        "integration",
+        "artifact"
+      ]
+    },
+    {
+      "question": "How should a containerized VectorForge service address Ollama in Docker Compose?",
+      "relevant_title": "Docker Compose Networking",
+      "answer_keywords": [
+        "service name",
+        "volumes",
+        "container"
+      ]
+    },
+    {
+      "question": "What is the purpose of named volumes in the VectorForge Compose deployment?",
+      "relevant_title": "Docker Compose Networking",
+      "answer_keywords": [
+        "service name",
+        "volumes",
+        "container"
+      ]
+    },
+    {
+      "question": "Why does a multithreaded vector index need synchronization around shared mutations?",
+      "relevant_title": "Concurrency and Shared State",
+      "answer_keywords": [
+        "mutex",
+        "shared",
+        "readers"
+      ]
+    },
+    {
+      "question": "How can lock scope affect throughput in a concurrent search service?",
+      "relevant_title": "Concurrency and Shared State",
+      "answer_keywords": [
+        "mutex",
+        "shared",
+        "readers"
+      ]
+    },
+    {
+      "question": "What protections should be added before exposing an unauthenticated vector database API publicly?",
+      "relevant_title": "API Security Boundaries",
+      "answer_keywords": [
+        "authentication",
+        "TLS",
+        "rate limiting"
+      ]
+    },
+    {
+      "question": "Why is binding a development API to localhost not equivalent to production authentication?",
+      "relevant_title": "API Security Boundaries",
+      "answer_keywords": [
+        "authentication",
+        "TLS",
+        "rate limiting"
       ]
     }
   ]
