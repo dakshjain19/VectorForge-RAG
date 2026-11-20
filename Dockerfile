@@ -10,6 +10,6 @@ WORKDIR /app
 COPY --from=builder /app/db .
 COPY --from=builder /app/index.html .
 RUN mkdir -p /app/data
-ENV SERVER_HOST=0.0.0.0
+ENV SERVER_HOST=0.0.0.0 PUBLIC_DEMO=true
 EXPOSE 8080
 CMD ["./db"]
