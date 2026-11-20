@@ -1007,16 +1007,29 @@ OllamaClient ollama(ollamaHost, 11434);
 
     httplib::Server svr;
 
-    // Reject cross-origin browser requests. CORS alone does not prevent
-    // simple cross-site POSTs from causing state changes (CSRF).
-    svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
-        const auto origin = req.get_header_value("Origin");
-        if (!origin.empty() &&
-            origin != "http://localhost:8080" &&
-            origin != "http://127.0.0.1:8080") {
+    const char* publicDemoEnv = std::getenv("PUBLIC_DEMO");
+    const bool publicDemo = publicDemoEnv && std::string(publicDemoEnv) == "true";
+
+    // Public demo is read-only: block every state-changing HTTP method.
+    // This is enforced server-side, not merely by hiding UI controls.
+    svr.set_pre_routing_handler([publicDemo](const httplib::Request& req, httplib::Response& res) {
+        if (publicDemo && (req.method == "POST" || req.method == "PUT" ||
+                           req.method == "PATCH" || req.method == "DELETE")) {
             res.status = 403;
-            res.set_content("{\"error\":\"cross-origin requests are not allowed\"}", "application/json");
+            res.set_content("{\"error\":\"This public demo is read-only.\"}", "application/json");
             return httplib::Server::HandlerResponse::Handled;
+        }
+
+        // Keep the local-development origin guard outside public-demo mode.
+        if (!publicDemo) {
+            const auto origin = req.get_header_value("Origin");
+            if (!origin.empty() &&
+                origin != "http://localhost:8080" &&
+                origin != "http://127.0.0.1:8080") {
+                res.status = 403;
+                res.set_content("{\"error\":\"cross-origin requests are not allowed\"}", "application/json");
+                return httplib::Server::HandlerResponse::Handled;
+            }
         }
         return httplib::Server::HandlerResponse::Unhandled;
     });
@@ -1341,7 +1354,13 @@ OllamaClient ollama(ollamaHost, 11434);
 
     const char* bindEnv = std::getenv("SERVER_HOST");
     const std::string bindHost = (bindEnv && *bindEnv) ? bindEnv : "127.0.0.1";
-    std::cout << "Binding HTTP server to " << bindHost << ":8080" << std::endl;
-    svr.listen(bindHost, 8080);
+    int port = 8080;
+    const char* portEnv = std::getenv("PORT");
+    if (portEnv && *portEnv) {
+        try { port = std::stoi(portEnv); }
+        catch (...) { throw std::runtime_error("Invalid PORT environment variable"); }
+    }
+    std::cout << "Binding HTTP server to " << bindHost << ":" << port << std::endl;
+    svr.listen(bindHost, port);
     return 0;
 }
